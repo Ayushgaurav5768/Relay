@@ -1,0 +1,191 @@
+# =============================================================================
+# Relay — Development Environment
+# =============================================================================
+# Start:   docker compose up -d --build
+# Stop:    docker compose down
+# Logs:    docker compose logs -f <service>
+# =============================================================================
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+
+  # ── PostgreSQL ─────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "${PGPORT:-5432}:5432"
+    environment:
+      POSTGRES_DB: ${PGDATABASE:-relay}
+      POSTGRES_USER: ${PGUSER:-relay}
+      POSTGRES_PASSWORD: ${PGPASSWORD:-relay_dev}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PGUSER:-relay}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    logging: *default-logging
+
+  # ── Redis ──────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    logging: *default-logging
+
+  # ── RabbitMQ (management plugin enabled) ─────────────────────
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672"   # AMQP
+      - "15672:15672"                    # Management UI
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-relay}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-relay_dev}
+    healthcheck:
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging: *default-logging
+
+  # ── Ingest Service ────────────────────────────────────────────
+  ingest:
+    build:
+      context: .
+      dockerfile: services/ingest/Dockerfile
+    ports:
+      - "${INGEST_PORT:-3001}:3001"
+    environment:
+      INGEST_PORT: 3001
+      PGUSER: ${PGUSER:-relay}
+      PGPASSWORD: ${PGPASSWORD:-relay_dev}
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: ${PGDATABASE:-relay}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: ${RABBITMQ_USER:-relay}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-relay_dev}
+      INGEST_HMAC_SECRET: ${INGEST_HMAC_SECRET:-dev-secret}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      NODE_ENV: ${NODE_ENV:-development}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    logging: *default-logging
+
+  # ── Delivery Worker ──────────────────────────────────────────
+  delivery-worker:
+    build:
+      context: .
+      dockerfile: services/delivery-worker/Dockerfile
+    ports:
+      - "${DELIVERY_WORKER_PORT:-3002}:3002"
+    environment:
+      DELIVERY_WORKER_PORT: 3002
+      PGUSER: ${PGUSER:-relay}
+      PGPASSWORD: ${PGPASSWORD:-relay_dev}
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: ${PGDATABASE:-relay}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: ${RABBITMQ_USER:-relay}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-relay_dev}
+      DELIVERY_HMAC_SECRET: ${DELIVERY_HMAC_SECRET:-dev-secret}
+      MAX_RETRIES: ${MAX_RETRIES:-5}
+      CB_FAILURE_THRESHOLD: ${CB_FAILURE_THRESHOLD:-5}
+      CB_COOLDOWN_SECONDS: ${CB_COOLDOWN_SECONDS:-30}
+      CB_HALF_OPEN_SUCCESS_THRESHOLD: ${CB_HALF_OPEN_SUCCESS_THRESHOLD:-2}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      NODE_ENV: ${NODE_ENV:-development}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    logging: *default-logging
+
+  # ── Dashboard API ────────────────────────────────────────────
+  dashboard-api:
+    build:
+      context: .
+      dockerfile: services/dashboard-api/Dockerfile
+    ports:
+      - "${DASHBOARD_PORT:-3003}:3003"
+    environment:
+      DASHBOARD_PORT: 3003
+      PGUSER: ${PGUSER:-relay}
+      PGPASSWORD: ${PGPASSWORD:-relay_dev}
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: ${PGDATABASE:-relay}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: ${RABBITMQ_USER:-relay}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-relay_dev}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      NODE_ENV: ${NODE_ENV:-development}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    logging: *default-logging
+
+  # ── Client (Vite dev server) ─────────────────────────────────
+  client:
+    build:
+      context: .
+      dockerfile: services/client/Dockerfile
+    ports:
+      - "${CLIENT_PORT:-5173}:5173"
+    environment:
+      VITE_DASHBOARD_API_URL: http://dashboard-api:3003
+    depends_on:
+      - dashboard-api
+    logging: *default-logging
+
+  # ── Flaky Endpoint Test Server ──────────────────────────────
+  flaky-server:
+    build:
+      context: .
+      dockerfile: services/flaky-endpoint-test-server/Dockerfile
+    ports:
+      - "${FLAKY_PORT:-9099}:9099"
+    environment:
+      FLAKY_PORT: 9099
+      FLAKY_EVERY: ${FLAKY_EVERY:-3}
+      FLAKY_LATENCY: ${FLAKY_LATENCY:-0}
+      FLAKY_FAIL_STATUS: ${FLAKY_FAIL_STATUS:-500}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      NODE_ENV: ${NODE_ENV:-development}
+    logging: *default-logging
+
+volumes:
+  pgdata:

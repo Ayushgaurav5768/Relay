@@ -1,0 +1,136 @@
+import { query } from '../db.js';
+
+/**
+ * Repository for the `events` table.
+ * @typedef {import('../types.js').Event} Event
+ * @typedef {import('../types.js').PaginatedResult} PaginatedResult
+ */
+export class EventRepository {
+  /**
+   * Insert a new event.
+   * If `idempotency_key` is provided and a row with the same
+   * (destination_id, idempotency_key) already exists, the unique
+   * partial index rejects the duplicate.
+   *
+   * @param {Object} data
+   * @param {string} data.id
+   * @param {string} data.destination_id
+   * @param {string} data.event_type
+   * @param {Object} data.payload  - Parsed JSON object (will be stringified)
+   * @param {string|null} [data.idempotency_key]
+   * @returns {Promise<Event>}
+   * @throws {Error} With code 23505 on idempotency violation
+   */
+  async insert(data) {
+    const { rows } = await query(
+      `INSERT INTO events (id, destination_id, event_type, payload, idempotency_key)
+       VALUES ($1, $2, $3, $4::jsonb, $5)
+       RETURNING *`,
+      [
+        data.id,
+        data.destination_id,
+        data.event_type,
+        JSON.stringify(data.payload),
+        data.idempotency_key || null,
+      ]
+    );
+    return rows[0];
+  }
+
+  /**
+   * Find an event by UUID.
+   * @param {string} id
+   * @returns {Promise<Event|null>}
+   */
+  async findById(id) {
+    const { rows } = await query(
+      'SELECT * FROM events WHERE id = $1',
+      [id]
+    );
+    return rows[0] || null;
+  }
+
+  /**
+   * Find an event by idempotency key for a given destination.
+   * @param {string} destinationId
+   * @param {string} idempotencyKey
+   * @returns {Promise<Event|null>}
+   */
+  async findByIdempotencyKey(destinationId, idempotencyKey) {
+    const { rows } = await query(
+      'SELECT * FROM events WHERE destination_id = $1 AND idempotency_key = $2',
+      [destinationId, idempotencyKey]
+    );
+    return rows[0] || null;
+  }
+
+  /**
+   * List events with optional filters and pagination.
+   *
+   * @param {Object} [filters]
+   * @param {string} [filters.destination_id]
+   * @param {string} [filters.status]
+   * @param {number} [filters.limit=50]
+   * @param {number} [filters.offset=0]
+   * @returns {Promise<PaginatedResult>}
+   */
+  async list(filters = {}) {
+    const conditions = [];
+    const params = [];
+    let idx = 0;
+
+    if (filters.destination_id) {
+      idx++;
+      conditions.push(`e.destination_id = $${idx}`);
+      params.push(filters.destination_id);
+    }
+
+    /* status is on delivery_attempts, not events — we join to filter by it */
+    if (filters.status) {
+      idx++;
+      conditions.push(`da.status = $${idx}`);
+      params.push(filters.status);
+    }
+
+    const whereClause = conditions.length
+      ? `WHERE ${conditions.join(' AND ')}`
+      : '';
+
+    const limit = filters.limit || 50;
+    const offset = filters.offset || 0;
+
+    idx++;
+    const limitParam = `$${idx}`;
+    params.push(limit);
+    idx++;
+    const offsetParam = `$${idx}`;
+    params.push(offset);
+
+    /* If filtering by status we must join, otherwise a plain count is enough */
+    const needsJoin = !!filters.status;
+
+    const fromClause = needsJoin
+      ? `FROM events e LEFT JOIN LATERAL (
+           SELECT status FROM delivery_attempts
+           WHERE event_id = e.id
+           ORDER BY attempt_number DESC LIMIT 1
+         ) da ON true`
+      : 'FROM events e';
+
+    const [{ rows: countRows }, { rows }] = await Promise.all([
+      query(`SELECT COUNT(*) ${fromClause} ${whereClause}`, params),
+      query(
+        `SELECT e.* ${fromClause}
+         ${whereClause}
+         ORDER BY e.created_at DESC
+         LIMIT ${limitParam} OFFSET ${offsetParam}`,
+        params
+      ),
+    ]);
+
+    return {
+      rows,
+      total: parseInt(countRows[0].count, 10),
+    };
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "name": "@relay/ingest",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "@relay/lib": "file:../../packages/lib",
+    "express": "^4.21.2",
+    "uuid": "^11.0.5",
+    "zod": "^3.24.1"
+  }
+}

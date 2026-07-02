@@ -1,0 +1,11 @@
+{
+  "name": "@relay/delivery-worker",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "@relay/lib": "file:../../packages/lib",
+    "express": "^4.21.2",
+    "undici": "^7.2.3",
+    "uuid": "^11.0.5"
+  }
+}
