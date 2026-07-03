@@ -2,6 +2,10 @@
   "name": "@relay/lib",
   "version": "1.0.0",
   "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
   "exports": {
     "./config.js": "./src/config.js",
     "./db.js": "./src/db.js",
@@ -12,7 +16,11 @@
     "./repositories/DestinationRepository.js": "./src/repositories/DestinationRepository.js",
     "./repositories/EventRepository.js": "./src/repositories/EventRepository.js",
     "./repositories/DeliveryAttemptRepository.js": "./src/repositories/DeliveryAttemptRepository.js",
-    "./repositories/OutboxRepository.js": "./src/repositories/OutboxRepository.js"
+    "./repositories/OutboxRepository.js": "./src/repositories/OutboxRepository.js",
+    "./circuitBreaker.js": "./src/circuitBreaker.js"
+  },
+  "devDependencies": {
+    "vitest": "^3.0.0"
   },
   "dependencies": {
     "amqplib": "^0.10.5",

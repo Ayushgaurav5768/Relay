@@ -15,6 +15,11 @@ const mockDestRepo = {
 
 const mockAttemptRepo = {
   insert: vi.fn(),
+  findLatestByEventId: vi.fn(),
+};
+
+const mockEventRepo = {
+  updateStatus: vi.fn(),
 };
 
 const mockDeliver = vi.fn();
@@ -32,8 +37,16 @@ vi.mock('@relay/lib/repositories/DeliveryAttemptRepository.js', () => ({
   DeliveryAttemptRepository: vi.fn().mockImplementation(() => mockAttemptRepo),
 }));
 
+vi.mock('@relay/lib/repositories/EventRepository.js', () => ({
+  EventRepository: vi.fn().mockImplementation(() => mockEventRepo),
+}));
+
 vi.mock('../src/deliver.js', () => ({
   deliver: vi.fn((...args) => mockDeliver(...args)),
+}));
+
+vi.mock('../src/retryScheduler.js', () => ({
+  computeNextRetry: vi.fn(() => '2026-07-03T08:00:00.000Z'),
 }));
 
 import { startConsumers, stopConsumers, __test__resetConsumersState } from '../src/consumer.js';
@@ -118,10 +131,11 @@ describe('handleMessage (via consume callback)', () => {
   beforeEach(async () => {
     mockDestRepo.findEnabled.mockResolvedValue([dest]);
     mockChannel.consume.mockImplementation(captureHandler);
+    mockAttemptRepo.findLatestByEventId.mockResolvedValue(null);
     await startConsumers();
   });
 
-  it('calls deliver, inserts attempt row, and acks on success', async () => {
+  it('calls deliver, inserts attempt row, updates event to delivered, and acks on success', async () => {
     mockDeliver.mockResolvedValue({ statusCode: 200, responseBodySnippet: '{"ok":true}' });
 
     const msg = triggerConsume(message);
@@ -140,11 +154,15 @@ describe('handleMessage (via consume callback)', () => {
     });
 
     await vi.waitFor(() => {
+      expect(mockEventRepo.updateStatus).toHaveBeenCalledWith(eventId, 'delivered');
+    });
+
+    await vi.waitFor(() => {
       expect(mockChannel.ack).toHaveBeenCalledWith(msg);
     });
   });
 
-  it('inserts failed attempt and acks on non-2xx response', async () => {
+  it('inserts failed attempt with retry, updates event to failed, and acks on non-2xx response', async () => {
     mockDeliver.mockResolvedValue({ statusCode: 500, responseBodySnippet: '{"error":"internal"}' });
 
     const msg = triggerConsume(message);
@@ -159,7 +177,11 @@ describe('handleMessage (via consume callback)', () => {
       status: 'failed',
       http_status_code: 500,
       response_body_snippet: '{"error":"internal"}',
-      next_retry_at: null,
+      next_retry_at: expect.any(String),
+    });
+
+    await vi.waitFor(() => {
+      expect(mockEventRepo.updateStatus).toHaveBeenCalledWith(eventId, 'failed');
     });
 
     await vi.waitFor(() => {
@@ -167,7 +189,7 @@ describe('handleMessage (via consume callback)', () => {
     });
   });
 
-  it('inserts failed attempt and acks on network error', async () => {
+  it('inserts failed attempt with retry, updates event to failed, and acks on network error', async () => {
     mockDeliver.mockRejectedValue(new Error('connect ECONNREFUSED'));
 
     const msg = triggerConsume(message);
@@ -182,7 +204,42 @@ describe('handleMessage (via consume callback)', () => {
       status: 'failed',
       http_status_code: null,
       response_body_snippet: null,
+      next_retry_at: expect.any(String),
+    });
+
+    await vi.waitFor(() => {
+      expect(mockEventRepo.updateStatus).toHaveBeenCalledWith(eventId, 'failed');
+    });
+
+    await vi.waitFor(() => {
+      expect(mockChannel.ack).toHaveBeenCalledWith(msg);
+    });
+  });
+
+  it('moves event to dead status when max attempts exceeded and no retry scheduled', async () => {
+    const { computeNextRetry } = await import('../src/retryScheduler.js');
+    computeNextRetry.mockReturnValue(null);
+
+    mockDeliver.mockResolvedValue({ statusCode: 500, responseBodySnippet: '{"error":"internal"}' });
+    mockAttemptRepo.findLatestByEventId.mockResolvedValue({ attempt_number: 8 });
+
+    const msg = triggerConsume(message);
+
+    await vi.waitFor(() => {
+      expect(mockAttemptRepo.insert).toHaveBeenCalled();
+    });
+
+    expect(mockAttemptRepo.insert).toHaveBeenCalledWith({
+      event_id: eventId,
+      attempt_number: 9,
+      status: 'failed',
+      http_status_code: 500,
+      response_body_snippet: '{"error":"internal"}',
       next_retry_at: null,
+    });
+
+    await vi.waitFor(() => {
+      expect(mockEventRepo.updateStatus).toHaveBeenCalledWith(eventId, 'dead');
     });
 
     await vi.waitFor(() => {

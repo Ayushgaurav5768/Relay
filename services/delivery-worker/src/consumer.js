@@ -1,9 +1,11 @@
 import { connectRabbitMQ, EXCHANGE_NAME } from '@relay/lib/rabbitmq.js';
 import { DestinationRepository } from '@relay/lib/repositories/DestinationRepository.js';
 import { DeliveryAttemptRepository } from '@relay/lib/repositories/DeliveryAttemptRepository.js';
+import { EventRepository } from '@relay/lib/repositories/EventRepository.js';
 import { config } from '@relay/lib/config.js';
 import { createLogger } from '@relay/lib/logger.js';
 import { deliver } from './deliver.js';
+import { computeNextRetry } from './retryScheduler.js';
 
 /*
  * Per-destination concurrency control:
@@ -18,10 +20,20 @@ import { deliver } from './deliver.js';
  * destinations' consumers remain fully available. Combined with separate
  * per-destination queues, worker capacity is naturally load-balanced
  * across all destinations.
+ *
+ * Retry strategy:
+ *   Postgres next_retry_at + scheduler worker — delivery_attempts rows
+ *   carry a next_retry_at timestamp. On failure, the consumer computes
+ *   an exponential backoff with full jitter and writes it to the attempt
+ *   row. A background retry worker (retryWorker.js) polls for due
+ *   attempts and re-publishes the event to RMQ for re-delivery.
+ *   Once maxRetries is exhausted, next_retry_at is set to null
+ *   (terminal failure).
  */
 
 const log = createLogger({ service: 'delivery-worker' });
 const CONCURRENCY = config.DELIVERY_CONCURRENCY;
+const MAX_ATTEMPTS = config.MAX_ATTEMPTS;
 
 let consumers = [];
 let consuming = false;
@@ -97,6 +109,10 @@ async function handleMessage(dest, msg, channel) {
   log.info({ event_id: eventId, destination_id: dest.id }, 'message received');
 
   const attemptRepo = new DeliveryAttemptRepository();
+
+  const latestAttempt = await attemptRepo.findLatestByEventId(eventId);
+  const attemptNumber = (latestAttempt?.attempt_number || 0) + 1;
+
   let statusCode = null;
   let snippet = null;
   let deliveryStatus = 'failed';
@@ -108,25 +124,50 @@ async function handleMessage(dest, msg, channel) {
 
     if (statusCode >= 200 && statusCode < 300) {
       deliveryStatus = 'success';
-      log.info({ event_id: eventId, statusCode }, 'delivery succeeded');
+      log.info({ event_id: eventId, statusCode, attemptNumber }, 'delivery succeeded');
     } else {
-      log.warn({ event_id: eventId, statusCode, snippet }, 'delivery returned non-2xx');
+      log.warn({ event_id: eventId, statusCode, attemptNumber, snippet }, 'delivery returned non-2xx');
     }
   } catch (err) {
-    log.error({ err, event_id: eventId, destination_id: dest.id }, 'delivery failed with network error');
+    log.error({ err, event_id: eventId, destination_id: dest.id, attemptNumber }, 'delivery failed with network error');
+  }
+
+  let nextRetryAt = null;
+  if (deliveryStatus === 'failed') {
+    nextRetryAt = computeNextRetry(attemptNumber, MAX_ATTEMPTS);
+    if (nextRetryAt) {
+      log.info({ event_id: eventId, attemptNumber, next_retry_at: nextRetryAt }, 'retry scheduled');
+    } else {
+      log.info({ event_id: eventId, attemptNumber }, 'max attempts exceeded, moving to DLQ');
+    }
   }
 
   try {
     await attemptRepo.insert({
       event_id: eventId,
-      attempt_number: 1,
+      attempt_number: attemptNumber,
       status: deliveryStatus,
       http_status_code: statusCode,
       response_body_snippet: snippet,
-      next_retry_at: null,
+      next_retry_at: nextRetryAt,
     });
   } catch (err) {
     log.error({ err, event_id: eventId }, 'failed to persist delivery attempt');
+  }
+
+  try {
+    const eventRepo = new EventRepository();
+    if (deliveryStatus === 'success') {
+      await eventRepo.updateStatus(eventId, 'delivered');
+      log.info({ event_id: eventId }, 'event marked delivered');
+    } else if (!nextRetryAt) {
+      await eventRepo.updateStatus(eventId, 'dead');
+      log.info({ event_id: eventId }, 'event moved to DLQ (dead)');
+    } else {
+      await eventRepo.updateStatus(eventId, 'failed');
+    }
+  } catch (err) {
+    log.error({ err, event_id: eventId }, 'failed to update event status');
   }
 
   channel.ack(msg);

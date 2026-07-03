@@ -10,12 +10,13 @@
 
 /**
  * @typedef {Object} Event
- * @property {string} id              - UUID
+ * @property {string} id
  * @property {string} destination_id
  * @property {string} event_type
- * @property {Object} payload         - Parsed JSON body
+ * @property {Object} payload
  * @property {string|null} idempotency_key
- * @property {string} created_at      - ISO timestamp
+ * @property {'pending'|'delivered'|'failed'|'dead'} status
+ * @property {string} created_at
  */
 
 /**

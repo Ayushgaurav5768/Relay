@@ -13,7 +13,10 @@ let requestCount = 0;
  * Simulates an unreliable webhook endpoint.
  *
  * Behaviour controlled by env vars:
- *   FLAKY_EVERY      — succeed every Nth request (default 3)
+ *   FLAKY_EVERY      — succeed every Nth request (default 3).
+ *                      Used when FLAKY_FAIL_COUNT is not set.
+ *   FLAKY_FAIL_COUNT — fail the first N requests, then succeed forever.
+ *                      When set, this overrides FLAKY_EVERY.
  *   FLAKY_LATENCY    — artificial delay in ms before responding
  *   FLAKY_FAIL_STATUS — HTTP status returned for "failure" responses
  */
@@ -21,9 +24,13 @@ app.post('/webhook', (_req, res) => {
   requestCount++;
 
   const delayMs = config.FLAKY_LATENCY;
+  const failCount = config.FLAKY_FAIL_COUNT;
+  const isSuccess = failCount > 0
+    ? requestCount > failCount
+    : requestCount % config.FLAKY_EVERY === 0;
 
   setTimeout(() => {
-    if (requestCount % config.FLAKY_EVERY === 0) {
+    if (isSuccess) {
       log.info({ request: requestCount }, 'flaky: success');
       res.status(200).json({ status: 'ok', received: true });
     } else {
@@ -42,6 +49,7 @@ app.get('/health', (_req, res) => {
     status: 'healthy',
     requests_served: requestCount,
     config: {
+      fail_count: config.FLAKY_FAIL_COUNT,
       succeed_every_n: config.FLAKY_EVERY,
       latency_ms: config.FLAKY_LATENCY,
       fail_status: config.FLAKY_FAIL_STATUS,
@@ -50,7 +58,12 @@ app.get('/health', (_req, res) => {
 });
 
 const server = app.listen(config.FLAKY_PORT, () => {
-  log.info({ port: config.FLAKY_PORT, every: config.FLAKY_EVERY, latency: config.FLAKY_LATENCY }, 'flaky server started');
+  log.info({
+    port: config.FLAKY_PORT,
+    failCount: config.FLAKY_FAIL_COUNT,
+    every: config.FLAKY_EVERY,
+    latency: config.FLAKY_LATENCY,
+  }, 'flaky server started');
 });
 
 const shutdown = () => {

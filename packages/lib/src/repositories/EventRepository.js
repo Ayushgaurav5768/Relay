@@ -27,8 +27,8 @@ export class EventRepository {
   async insert(data, client) {
     const db = client || query;
     const { rows } = await db(
-      `INSERT INTO events (id, destination_id, event_type, payload, idempotency_key)
-       VALUES ($1, $2, $3, $4::jsonb, $5)
+      `INSERT INTO events (id, destination_id, event_type, payload, idempotency_key, status)
+       VALUES ($1, $2, $3, $4::jsonb, $5, 'pending')
        RETURNING *`,
       [
         data.id,
@@ -39,6 +39,22 @@ export class EventRepository {
       ]
     );
     return rows[0];
+  }
+
+  /**
+   * Update an event's status.
+   * @param {string} eventId
+   * @param {'pending'|'delivered'|'failed'|'dead'} status
+   * @param {import('pg').PoolClient} [client] - Transaction client
+   * @returns {Promise<Event|null>}
+   */
+  async updateStatus(eventId, status, client) {
+    const db = client || query;
+    const { rows } = await db(
+      'UPDATE events SET status = $2 WHERE id = $1 RETURNING *',
+      [eventId, status]
+    );
+    return rows[0] || null;
   }
 
   /**

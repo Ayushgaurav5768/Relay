@@ -5,6 +5,7 @@ import { createLogger } from '@relay/lib/logger.js';
 import { withTransaction } from '@relay/lib/db.js';
 import { EventRepository } from '@relay/lib/repositories/EventRepository.js';
 import { DestinationRepository } from '@relay/lib/repositories/DestinationRepository.js';
+import { DeliveryAttemptRepository } from '@relay/lib/repositories/DeliveryAttemptRepository.js';
 import { OutboxRepository } from '@relay/lib/repositories/OutboxRepository.js';
 import { authMiddleware } from './auth.js';
 import { rateLimiter } from './rateLimiter.js';
@@ -123,6 +124,70 @@ router.get('/events/:id', async (req, res) => {
   }
 
   res.json(event);
+});
+
+router.post('/events/:id/replay', async (req, res) => {
+  const eventRepo = new EventRepository();
+  const destRepo = new DestinationRepository();
+  const attemptRepo = new DeliveryAttemptRepository();
+  const outboxRepo = new OutboxRepository();
+
+  const event = await eventRepo.findById(req.params.id);
+  if (!event) {
+    res.status(404).json({ error: 'event not found' });
+    return;
+  }
+
+  if (event.status !== 'dead') {
+    res.status(422).json({ error: 'only dead-lettered events can be replayed', status: event.status });
+    return;
+  }
+
+  const destination = await destRepo.findById(event.destination_id);
+  if (!destination) {
+    res.status(404).json({ error: 'destination not found' });
+    return;
+  }
+
+  if (destination.owner_id !== req.owner_id) {
+    res.status(403).json({ error: 'destination does not belong to this owner' });
+    return;
+  }
+
+  if (destination.status !== 'active') {
+    res.status(422).json({ error: 'destination is not active' });
+    return;
+  }
+
+  try {
+    await withTransaction(async (client) => {
+      await attemptRepo.deleteByEventId(event.id);
+      await eventRepo.updateStatus(event.id, 'pending', client);
+      await outboxRepo.insert({
+        event_id: event.id,
+        destination_id: event.destination_id,
+        routing_key: event.destination_id,
+        payload: {
+          event_id: event.id,
+          destination_id: event.destination_id,
+          event_type: event.event_type,
+          payload: event.payload,
+        },
+      }, client);
+    });
+
+    log.info({ event_id: event.id, destination_id: event.destination_id }, 'event replayed');
+
+    res.status(200).json({
+      event_id: event.id,
+      destination_id: event.destination_id,
+      event_type: event.event_type,
+      status: 'pending',
+    });
+  } catch (err) {
+    log.error({ err, event_id: event.id }, 'failed to replay event');
+    res.status(500).json({ error: 'internal error' });
+  }
 });
 
 export default router;

@@ -5,6 +5,7 @@ import { checkDb, closePool } from '@relay/lib/db.js';
 import { checkRedis, closeRedis } from '@relay/lib/redis.js';
 import { checkRabbitMQ, closeRabbitMQ } from '@relay/lib/rabbitmq.js';
 import { startConsumers, stopConsumers } from './consumer.js';
+import { startRetryWorker, stopRetryWorker } from './retryWorker.js';
 
 const log = createLogger({ service: 'delivery-worker' });
 const app = express();
@@ -34,10 +35,12 @@ const server = app.listen(config.DELIVERY_WORKER_PORT, () => {
   startConsumers().catch((err) => {
     log.error({ err }, 'failed to start consumers');
   });
+  startRetryWorker();
 });
 
 const shutdown = async () => {
   log.info('shutting down');
+  stopRetryWorker();
   await stopConsumers();
   server.close();
   await Promise.all([closePool(), closeRedis(), closeRabbitMQ()]);

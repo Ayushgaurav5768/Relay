@@ -145,4 +145,14 @@ export class DeliveryAttemptRepository {
     );
     return rows[0].count;
   }
+
+  /**
+   * Delete all delivery attempts for an event.
+   * Used by the replay endpoint to reset the attempt counter.
+   * @param {string} eventId
+   * @returns {Promise<void>}
+   */
+  async deleteByEventId(eventId) {
+    await query('DELETE FROM delivery_attempts WHERE event_id = $1', [eventId]);
+  }
 }
