@@ -45,6 +45,18 @@
  */
 
 /**
+ * @typedef {Object} OutboxRecord
+ * @property {string} id              - UUID
+ * @property {string} event_id
+ * @property {string} destination_id
+ * @property {string} routing_key
+ * @property {Object} payload         - Parsed JSON body to publish
+ * @property {boolean} published
+ * @property {string} created_at      - ISO timestamp
+ * @property {string|null} published_at - ISO timestamp
+ */
+
+/**
  * @typedef {Object} PaginatedResult
  * @property {Object[]} rows
  * @property {number} total

@@ -12,17 +12,21 @@ export class EventRepository {
    * (destination_id, idempotency_key) already exists, the unique
    * partial index rejects the duplicate.
    *
+   * Accepts an optional `client` for use inside a managed transaction.
+   *
    * @param {Object} data
    * @param {string} data.id
    * @param {string} data.destination_id
    * @param {string} data.event_type
    * @param {Object} data.payload  - Parsed JSON object (will be stringified)
    * @param {string|null} [data.idempotency_key]
+   * @param {import('pg').PoolClient} [client] - Transaction client
    * @returns {Promise<Event>}
    * @throws {Error} With code 23505 on idempotency violation
    */
-  async insert(data) {
-    const { rows } = await query(
+  async insert(data, client) {
+    const db = client || query;
+    const { rows } = await db(
       `INSERT INTO events (id, destination_id, event_type, payload, idempotency_key)
        VALUES ($1, $2, $3, $4::jsonb, $5)
        RETURNING *`,

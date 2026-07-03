@@ -11,7 +11,8 @@
     "./types.js": "./src/types.js",
     "./repositories/DestinationRepository.js": "./src/repositories/DestinationRepository.js",
     "./repositories/EventRepository.js": "./src/repositories/EventRepository.js",
-    "./repositories/DeliveryAttemptRepository.js": "./src/repositories/DeliveryAttemptRepository.js"
+    "./repositories/DeliveryAttemptRepository.js": "./src/repositories/DeliveryAttemptRepository.js",
+    "./repositories/OutboxRepository.js": "./src/repositories/OutboxRepository.js"
   },
   "dependencies": {
     "amqplib": "^0.10.5",
