@@ -4,6 +4,7 @@ import { config } from '@relay/lib/config.js';
 import { checkDb, closePool } from '@relay/lib/db.js';
 import { checkRedis, closeRedis } from '@relay/lib/redis.js';
 import { checkRabbitMQ, closeRabbitMQ } from '@relay/lib/rabbitmq.js';
+import { metricsHandler } from '@relay/lib/metrics.js';
 import eventsRouter from './events.js';
 import { startOutboxPublisher, stopOutboxPublisher } from './outboxPublisher.js';
 
@@ -11,6 +12,8 @@ const log = createLogger({ service: 'ingest' });
 const app = express();
 
 app.use(express.json());
+
+app.get('/metrics', metricsHandler);
 
 app.get('/health', async (_req, res) => {
   const [db, redis, rmq] = await Promise.all([

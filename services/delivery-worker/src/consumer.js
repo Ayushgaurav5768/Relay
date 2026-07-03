@@ -6,6 +6,7 @@ import { config } from '@relay/lib/config.js';
 import { createLogger } from '@relay/lib/logger.js';
 import { getRedis } from '@relay/lib/redis.js';
 import { CircuitBreaker } from '@relay/lib/circuitBreaker.js';
+import { eventsDeliveredTotal, eventsFailedTotal, eventsDlqTotal, circuitBreakerState, queueDepth } from '@relay/lib/metrics.js';
 import { deliver } from './deliver.js';
 import { computeNextRetry } from './retryScheduler.js';
 
@@ -157,6 +158,42 @@ export async function startConsumers() {
   }
 }
 
+export function getRmqChannel() {
+  return rmqChannel;
+}
+
+let queueDepthTimer = null;
+
+export function startQueueDepthCollector(intervalMs = 15000) {
+  async function collect() {
+    const ch = rmqChannel;
+    if (!ch) return;
+    try {
+      const destRepo = new DestinationRepository();
+      const destinations = await destRepo.findEnabled();
+      for (const dest of destinations) {
+        try {
+          const { messageCount } = await ch.checkQueue(dest.id);
+          queueDepth.set({ destination_id: dest.id }, messageCount);
+        } catch {
+          queueDepth.set({ destination_id: dest.id }, -1);
+        }
+      }
+    } catch (err) {
+      log.warn({ err }, 'queue depth collection failed');
+    }
+  }
+  collect();
+  queueDepthTimer = setInterval(collect, intervalMs);
+}
+
+export function stopQueueDepthCollector() {
+  if (queueDepthTimer) {
+    clearInterval(queueDepthTimer);
+    queueDepthTimer = null;
+  }
+}
+
 export async function stopConsumers() {
   if (!consuming) return;
   consuming = false;
@@ -178,6 +215,7 @@ export async function stopConsumers() {
   }
   consumers = [];
   circuitBreakers.clear();
+  stopQueueDepthCollector();
   log.info('all consumers stopped');
 }
 
@@ -257,9 +295,12 @@ async function handleMessage(dest, msg, channel) {
   if (cb) {
     try {
       if (deliveryStatus === 'success') {
-        await cb.onSuccess();
+        const cbs = await cb.onSuccess();
+        circuitBreakerState.set({ destination_id: dest.id, state: cbs.state }, 1);
       } else {
         const cbResult = await cb.onFailure();
+        circuitBreakerState.reset({ destination_id: dest.id });
+        circuitBreakerState.set({ destination_id: dest.id, state: cbResult.state }, 1);
         if (cbResult.state === 'OPEN') {
           const cooldownMs = Math.max(0, cbResult.cooldown_until - Date.now());
           if (cooldownMs > 0) {
@@ -279,6 +320,16 @@ async function handleMessage(dest, msg, channel) {
       log.info({ event_id: eventId, attemptNumber, next_retry_at: nextRetryAt }, 'retry scheduled');
     } else {
       log.info({ event_id: eventId, attemptNumber }, 'max attempts exceeded, moving to DLQ');
+    }
+  }
+
+  if (deliveryStatus === 'success') {
+    eventsDeliveredTotal.inc({ destination_id: dest.id });
+  }
+  if (deliveryStatus === 'failed') {
+    eventsFailedTotal.inc({ destination_id: dest.id });
+    if (!nextRetryAt) {
+      eventsDlqTotal.inc({ destination_id: dest.id });
     }
   }
 

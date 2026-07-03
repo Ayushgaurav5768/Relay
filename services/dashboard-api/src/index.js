@@ -3,9 +3,12 @@ import { createLogger } from '@relay/lib/logger.js';
 import { config } from '@relay/lib/config.js';
 import { checkDb, closePool } from '@relay/lib/db.js';
 import { checkRedis, closeRedis } from '@relay/lib/redis.js';
+import { metricsHandler } from '@relay/lib/metrics.js';
 
 const log = createLogger({ service: 'dashboard-api' });
 const app = express();
+
+app.get('/metrics', metricsHandler);
 
 app.get('/health', async (_req, res) => {
   const [db, redis] = await Promise.all([

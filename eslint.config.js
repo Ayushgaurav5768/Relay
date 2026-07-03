@@ -3,7 +3,7 @@ import importPlugin from 'eslint-plugin-import';
 
 export default [
   {
-    ignores: ['node_modules/', 'dist/', 'coverage/', '.tmp/', '*.log'],
+    ignores: ['node_modules/', '**/dist/', 'coverage/', '.tmp/', '*.log'],
   },
   js.configs.recommended,
   importPlugin.flatConfigs.recommended,

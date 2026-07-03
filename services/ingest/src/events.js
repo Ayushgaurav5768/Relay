@@ -8,6 +8,7 @@ import { EventRepository } from '@relay/lib/repositories/EventRepository.js';
 import { DestinationRepository } from '@relay/lib/repositories/DestinationRepository.js';
 import { DeliveryAttemptRepository } from '@relay/lib/repositories/DeliveryAttemptRepository.js';
 import { OutboxRepository } from '@relay/lib/repositories/OutboxRepository.js';
+import { eventsIngestedTotal } from '@relay/lib/metrics.js';
 import { authMiddleware } from './auth.js';
 import { rateLimiter } from './rateLimiter.js';
 
@@ -95,6 +96,8 @@ router.post('/events', async (req, res) => {
     });
 
     log.info({ event_id: event.id, destination_id, event_type }, 'event ingested');
+
+    eventsIngestedTotal.inc({ destination_id });
 
     res.status(201).json({
       event_id: event.id,
