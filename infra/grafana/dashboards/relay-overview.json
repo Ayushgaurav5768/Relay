@@ -1,0 +1,379 @@
+{
+  "title": "Relay — Webhook Delivery Overview",
+  "uid": "relay-overview",
+  "version": 1,
+  "schemaVersion": 36,
+  "tags": ["relay", "webhook", "delivery"],
+  "timezone": "browser",
+  "editable": true,
+  "refresh": "5s",
+  "time": {
+    "from": "now-5m",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Ingestion Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "showPoints": "never",
+            "lineInterpolation": "smooth",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(events_ingested_total[1m]))",
+          "legendFormat": "All destinations",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(events_ingested_total[1m])",
+          "legendFormat": "{{destination_id}}",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Delivery Success Rate",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 3, "x": 6, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "red" },
+              { "value": 90, "color": "yellow" },
+              { "value": 99, "color": "green" }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(events_delivered_total[1m])) / (sum(rate(events_delivered_total[1m])) + sum(rate(events_failed_total[1m]))) * 100",
+          "legendFormat": "Success Rate",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "DLQ Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 6, "x": 9, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "showPoints": "never",
+            "lineInterpolation": "smooth",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(events_dlq_total[1m]))",
+          "legendFormat": "All destinations",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(events_dlq_total[1m])",
+          "legendFormat": "{{destination_id}}",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Active Events by Status",
+      "type": "piechart",
+      "gridPos": { "h": 8, "w": 6, "x": 15, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [],
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "blue" }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(events_ingested_total) - sum(events_delivered_total) - sum(events_failed_total) - sum(events_dlq_total)",
+          "legendFormat": "Pending",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(events_delivered_total)",
+          "legendFormat": "Delivered",
+          "refId": "B"
+        },
+        {
+          "expr": "sum(events_failed_total) - sum(events_dlq_total)",
+          "legendFormat": "Failed (retrying)",
+          "refId": "C"
+        },
+        {
+          "expr": "sum(events_dlq_total)",
+          "legendFormat": "Dead (DLQ)",
+          "refId": "D"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Delivery Latency — p50 / p95 / p99",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "showPoints": "never",
+            "lineInterpolation": "smooth",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(delivery_attempt_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p50 (all)",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(delivery_attempt_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p95 (all)",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(delivery_attempt_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p99 (all)",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Delivery Latency by Destination (p99)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "showPoints": "never",
+            "lineInterpolation": "smooth",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(delivery_attempt_duration_seconds_bucket[5m])) by (le, destination_id))",
+          "legendFormat": "{{destination_id}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Circuit Breaker State",
+      "type": "table",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "green" },
+              { "value": 0, "color": "green" },
+              { "value": 1, "color": "orange" },
+              { "value": 2, "color": "red" }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "value": "0",
+              "result": { "text": "CLOSED", "color": "green" }
+            },
+            {
+              "type": "value",
+              "value": "1",
+              "result": { "text": "HALF_OPEN", "color": "orange" }
+            },
+            {
+              "type": "value",
+              "value": "2",
+              "result": { "text": "OPEN", "color": "red" }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "clamp_max(circuit_breaker_state{state=\"open\"} * 2, 2) or clamp_max(circuit_breaker_state{state=\"half_open\"} * 1, 1) or circuit_breaker_state{state=\"closed\"} * 0",
+          "legendFormat": "{{destination_id}}",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "instance": true,
+              "job": true,
+              "state": true
+            },
+            "indexByName": {},
+            "renameByName": {
+              "Value": "State",
+              "destination_id": "Destination"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "CB State Timeline (OPEN)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "showPoints": "never",
+            "lineInterpolation": "stepAfter",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "circuit_breaker_state{state=\"open\"}",
+          "legendFormat": "OPEN — {{destination_id}}",
+          "refId": "A"
+        },
+        {
+          "expr": "circuit_breaker_state{state=\"half_open\"}",
+          "legendFormat": "HALF_OPEN — {{destination_id}}",
+          "refId": "B"
+        },
+        {
+          "expr": "circuit_breaker_state{state=\"closed\"}",
+          "legendFormat": "CLOSED — {{destination_id}}",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Queue Depth by Destination",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 24 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "showPoints": "never",
+            "lineInterpolation": "smooth",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "queue_depth",
+          "legendFormat": "{{destination_id}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "Cumulative Totals",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 24 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "blue" }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(events_ingested_total)",
+          "legendFormat": "Ingested",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(events_delivered_total)",
+          "legendFormat": "Delivered",
+          "refId": "B"
+        },
+        {
+          "expr": "sum(events_failed_total)",
+          "legendFormat": "Failed",
+          "refId": "C"
+        },
+        {
+          "expr": "sum(events_dlq_total)",
+          "legendFormat": "DLQ (Dead)",
+          "refId": "D"
+        }
+      ]
+    }
+  ]
+}

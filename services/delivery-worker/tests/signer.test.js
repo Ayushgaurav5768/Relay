@@ -38,6 +38,40 @@ describe('sign', () => {
   });
 });
 
+describe('sign — edge cases', () => {
+  it('handles unicode payload', () => {
+    const result = sign('{"msg": "héllo 世界"}', 'secret', 1);
+    expect(result).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it('handles large payload (100KB)', () => {
+    const large = 'x'.repeat(100_000);
+    const result = sign(large, 'secret', 1);
+    expect(result).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it('handles special characters in secret', () => {
+    const result = sign('payload', '!@#$%^&*()_\n\t\\', 1);
+    expect(result).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it('handles very long secret (1KB)', () => {
+    const longSecret = 'k'.repeat(1024);
+    const result = sign('payload', longSecret, 1);
+    expect(result).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it('handles empty secret', () => {
+    const result = sign('payload', '', 1);
+    expect(result).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it('handles zero timestamp', () => {
+    const result = sign('payload', 'secret', 0);
+    expect(result).toMatch(/^[a-f0-9]{64}$/);
+  });
+});
+
 describe('formatSignatureHeader', () => {
   it('formats as t=<ts>,v1=<hex>', () => {
     const result = formatSignatureHeader(1000, 'abc123');

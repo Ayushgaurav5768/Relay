@@ -37,7 +37,7 @@ Relay/
 | Redis | 6379 | REDIS_PORT |
 | RabbitMQ | 5672 / 15672 | RABBITMQ_PORT |
 
-## What Has Been Built (6 phases)
+## What Has Been Built (9 phases)
 
 ### Phase 1-2: Foundation + Ingest
 - Express API with Basic auth, Zod validation, Redis token-bucket rate limiter
@@ -108,6 +108,25 @@ Vite config proxies `/api` → `localhost:3001` with path rewrite (strip `/api`)
 
 Each service exposes `GET /metrics`. CB state collected every 10s via Redis KEYS. Queue depth every 15s via `channel.checkQueue()`.
 
+### Phase 9a: Prometheus + Grafana Observability
+- Prometheus service in docker-compose.yml scraping all 3 services on 5s intervals, 7-day retention
+- Grafana auto-provisioned with Prometheus datasource and `relay-overview.json` dashboard (10 panels)
+- Dashboard panels: ingestion rate, delivery success rate, DLQ rate, active events by status, latency p50/p95/p99, CB state table + timeline, queue depth, cumulative counters
+- `docs/observability.md` — metric reference with alert thresholds for every gauge
+- `infra/prometheus/prometheus.yml` — scrape config
+- `infra/grafana/datasources/` + `infra/grafana/dashboards/` — auto-provisioning config
+
+### Phase 9b: Load Test + Verification + Expanded Unit Tests
+- `load-tests/load-test.js` — k6 ramping-arrival-rate script: 200 req/s sustained across 3 destinations (always-succeed, flaky-dest, always-fail)
+- `load-tests/seed-load-test.js` — seeds 3 test destinations with matching /succeed and /fail endpoints
+- `load-tests/verifyLoadTest.js` — Postgres verification: asserts terminal status, delivery order (FIFO), latency isolation between healthy and failing destinations
+- Bug fix: `EventRepository.insert` and `OutboxRepository.insert` — fixed lost `this` context on `client.query` via `.bind(client)`
+- Flaky server updated: `/succeed` (always 200), `/fail` (always 500) endpoints added alongside `/webhook`
+- `packages/lib/tests/repositories.test.js` — 48 unit tests covering all 4 repositories (Event, Outbox, Destination, DeliveryAttempt) with mocked `query`
+- `packages/lib/tests/circuitBreaker-edge.test.js` — 10 CB edge case tests (already OPEN, probe in all states, cooldown retry_after, eval argument verification)
+- `services/delivery-worker/tests/signer.test.js` — 6 new edge cases (unicode, 100KB payload, special characters, long secret, empty secret, zero timestamp)
+- `services/delivery-worker/tests/retryScheduler.test.js` — 4 new edge cases (no negative delay, maxRetries=0, last allowed attempt, full jitter distribution)
+
 ## Database Schema
 ```
 destinations (id TEXT PK, owner_id, url, secret, status, created_at)
@@ -131,17 +150,16 @@ circuit_breaker_state (destination_id TEXT PK, state, failure_count, opened_at, 
 | INGEST_RATE_LIMIT_INTERVAL_MS | 1000 | Rate limit window |
 
 ## Test Results
-- lib: 26 tests (10 signature + 16 CB)
+- lib: 84 tests (10 verifySignature + 26 CB + 48 repositories)
 - ingest: 32 unit tests (30 events.test.js + 2 integration)
-- delivery-worker: 36 tests (17 consumer + 7 retryScheduler + 7 signer + 5 integration)
-- Total: 94 tests — all passing
+- delivery-worker: 40 tests (17 consumer + 11 retryScheduler + 13 signer + 5 integration)
+- Total: 156 tests — all passing
 - Lint: clean (1 pre-existing seed.js issue)
 
 ## Git
 Remote: https://github.com/Ayushgaurav5768/Relay.git
 Current HEAD: 13efd11 on main
 
-## What's Next (Phase 9)
+## What's Next
 - `circuit_breaker_state` table — long-term storage with backfill from Redis
-- Grafana dashboard for the Prometheus metrics
-- Possibly: CI/CD (GitHub Actions), rate limit per-destination, webhook secret rotation
+- CI/CD (GitHub Actions), rate limit per-destination, webhook secret rotation

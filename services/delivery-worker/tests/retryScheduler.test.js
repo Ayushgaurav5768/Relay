@@ -57,4 +57,37 @@ describe('computeNextRetry', () => {
       expect(delay).toBeLessThanOrEqual(5 * 60 * 1000 + 100);
     }
   });
+
+  it('returns at least 0ms delay (no negative values)', () => {
+    for (let i = 0; i < 100; i++) {
+      const ts = new Date(computeNextRetry(1, 3)).getTime();
+      const delay = ts - Date.now();
+      expect(delay).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it('maxRetries=0 disallows any retry', () => {
+    expect(computeNextRetry(1, 0)).toBeNull();
+  });
+
+  it('attempt equals maxRetries (last allowed) returns a timestamp', () => {
+    const result = computeNextRetry(5, 5);
+    expect(result).not.toBeNull();
+    expect(typeof result).toBe('string');
+    const ts = new Date(result).getTime();
+    expect(ts).toBeGreaterThan(Date.now() - 1000);
+  });
+
+  it('jitter produces values across the full distribution (not all near zero)', () => {
+    const delays = [];
+    for (let i = 0; i < 200; i++) {
+      const ts = new Date(computeNextRetry(3, 5)).getTime();
+      delays.push(ts - Date.now());
+    }
+    const max = Math.max(...delays);
+    const min = Math.min(...delays);
+    // With full jitter on 8s window, max should be near 8000 and min near 0
+    expect(max).toBeGreaterThan(4000);
+    expect(min).toBeLessThan(1000);
+  });
 });

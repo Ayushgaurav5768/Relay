@@ -19,8 +19,8 @@ export class OutboxRepository {
    * @returns {Promise<OutboxRecord>}
    */
   async insert(data, client) {
-    const db = client || query;
-    const { rows } = await db(
+    const runQuery = client ? client.query.bind(client) : query;
+    const { rows } = await runQuery(
       `INSERT INTO outbox (event_id, destination_id, routing_key, payload)
        VALUES ($1, $2, $3, $4::jsonb)
        RETURNING *`,

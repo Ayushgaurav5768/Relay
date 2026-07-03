@@ -25,8 +25,8 @@ export class EventRepository {
    * @throws {Error} With code 23505 on idempotency violation
    */
   async insert(data, client) {
-    const db = client || query;
-    const { rows } = await db(
+    const runQuery = client ? client.query.bind(client) : query;
+    const { rows } = await runQuery(
       `INSERT INTO events (id, destination_id, event_type, payload, idempotency_key, status)
        VALUES ($1, $2, $3, $4::jsonb, $5, 'pending')
        RETURNING *`,
@@ -49,8 +49,8 @@ export class EventRepository {
    * @returns {Promise<Event|null>}
    */
   async updateStatus(eventId, status, client) {
-    const db = client || query;
-    const { rows } = await db(
+    const runQuery = client ? client.query.bind(client) : query;
+    const { rows } = await runQuery(
       'UPDATE events SET status = $2 WHERE id = $1 RETURNING *',
       [eventId, status]
     );
