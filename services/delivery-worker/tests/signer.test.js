@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { sign } from '../src/signer.js';
+import { sign, formatSignatureHeader } from '../src/signer.js';
 
 describe('sign', () => {
-  it('produces a deterministic HMAC-SHA256 signature', () => {
+  it('produces a deterministic HMAC-SHA256 hex string', () => {
     const result = sign('payload', 'secret', 1000);
-    expect(result).toMatch(/^sha256=[a-f0-9]{64}$/);
+    expect(result).toMatch(/^[a-f0-9]{64}$/);
     const result2 = sign('payload', 'secret', 1000);
     expect(result).toBe(result2);
   });
@@ -27,13 +27,20 @@ describe('sign', () => {
     expect(a).not.toBe(b);
   });
 
-  it('always produces a sha256= prefix', () => {
+  it('always produces a 64-char hex string', () => {
     const result = sign('x', 'y', 1);
-    expect(result).toMatch(/^sha256=/);
+    expect(result).toMatch(/^[a-f0-9]{64}$/);
   });
 
   it('handles empty payload', () => {
     const result = sign('', 'secret', 1);
-    expect(result).toMatch(/^sha256=[a-f0-9]{64}$/);
+    expect(result).toMatch(/^[a-f0-9]{64}$/);
+  });
+});
+
+describe('formatSignatureHeader', () => {
+  it('formats as t=<ts>,v1=<hex>', () => {
+    const result = formatSignatureHeader(1000, 'abc123');
+    expect(result).toBe('t=1000,v1=abc123');
   });
 });

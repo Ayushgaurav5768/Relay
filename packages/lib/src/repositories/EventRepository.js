@@ -153,4 +153,64 @@ export class EventRepository {
       total: parseInt(countRows[0].count, 10),
     };
   }
+
+  /**
+   * List events with delivery-attempt counts, optional filters by event
+   * status, and page-based pagination.
+   *
+   * Intended for the dashboard API (GET /events).
+   *
+   * @param {Object} [filters]
+   * @param {string} [filters.destination_id]
+   * @param {string} [filters.status] - Filter by events.status
+   * @param {number} [filters.page=1]
+   * @param {number} [filters.limit=50] - Max 100
+   * @returns {Promise<{rows: Array, total: number}>}
+   */
+  async listWithAttemptCounts(filters = {}) {
+    const conditions = [];
+    const params = [];
+
+    if (filters.destination_id) {
+      conditions.push(`e.destination_id = $${params.length + 1}`);
+      params.push(filters.destination_id);
+    }
+
+    if (filters.status) {
+      conditions.push(`e.status = $${params.length + 1}`);
+      params.push(filters.status);
+    }
+
+    const whereClause = conditions.length
+      ? `WHERE ${conditions.join(' AND ')}`
+      : '';
+
+    const page = Math.max(1, filters.page || 1);
+    const limit = Math.min(100, Math.max(1, filters.limit || 50));
+    const offset = (page - 1) * limit;
+
+    const [{ rows: countRows }, { rows }] = await Promise.all([
+      query(
+        `SELECT COUNT(*) FROM events e ${whereClause}`,
+        params
+      ),
+      query(
+        `SELECT e.*,
+          COALESCE(
+            (SELECT COUNT(*)::int FROM delivery_attempts da WHERE da.event_id = e.id),
+            0
+          ) AS attempt_count
+         FROM events e
+         ${whereClause}
+         ORDER BY e.created_at DESC
+         LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+        [...params, limit, offset]
+      ),
+    ]);
+
+    return {
+      rows,
+      total: parseInt(countRows[0].count, 10),
+    };
+  }
 }

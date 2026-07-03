@@ -17,7 +17,8 @@
     "./repositories/EventRepository.js": "./src/repositories/EventRepository.js",
     "./repositories/DeliveryAttemptRepository.js": "./src/repositories/DeliveryAttemptRepository.js",
     "./repositories/OutboxRepository.js": "./src/repositories/OutboxRepository.js",
-    "./circuitBreaker.js": "./src/circuitBreaker.js"
+    "./circuitBreaker.js": "./src/circuitBreaker.js",
+    "./verifySignature.js": "./src/verifySignature.js"
   },
   "devDependencies": {
     "vitest": "^3.0.0"

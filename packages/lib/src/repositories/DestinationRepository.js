@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { query } from '../db.js';
 
 /**
@@ -7,6 +8,11 @@ import { query } from '../db.js';
 export class DestinationRepository {
   /**
    * Find a destination by its logical ID.
+   *
+   * NOTE: This returns all columns, including `secret`. HTTP route
+   * handlers MUST strip the secret before returning destination data
+   * to clients in GET responses.
+   *
    * @param {string} id
    * @returns {Promise<Destination|null>}
    */
@@ -43,20 +49,28 @@ export class DestinationRepository {
 
   /**
    * Create a new destination.
+   *
+   * A signing secret is auto-generated via crypto.randomBytes(32) if the
+   * caller does not provide one. The secret is returned in the response
+   * so the caller (e.g. a CLI or dashboard) can display it once.
+   *
+   * Never log the secret in plaintext.
+   *
    * @param {Object} data
    * @param {string} data.id
    * @param {string} data.owner_id
    * @param {string} data.url
-   * @param {string|null} [data.secret]
+   * @param {string} [data.secret]  — if omitted, a random 32-byte hex secret is generated
    * @param {'active'|'disabled'} [data.status]
    * @returns {Promise<Destination>}
    */
   async create(data) {
+    const secret = data.secret || crypto.randomBytes(32).toString('hex');
     const { rows } = await query(
       `INSERT INTO destinations (id, owner_id, url, secret, status)
        VALUES ($1, $2, $3, $4, COALESCE($5, 'active'))
        RETURNING *`,
-      [data.id, data.owner_id, data.url, data.secret || null, data.status || 'active']
+      [data.id, data.owner_id, data.url, secret, data.status || 'active']
     );
     return rows[0];
   }

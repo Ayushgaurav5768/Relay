@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
 import { createLogger } from '@relay/lib/logger.js';
 import { withTransaction } from '@relay/lib/db.js';
+import { getRedis } from '@relay/lib/redis.js';
 import { EventRepository } from '@relay/lib/repositories/EventRepository.js';
 import { DestinationRepository } from '@relay/lib/repositories/DestinationRepository.js';
 import { DeliveryAttemptRepository } from '@relay/lib/repositories/DeliveryAttemptRepository.js';
@@ -116,6 +117,8 @@ router.post('/events', async (req, res) => {
 
 router.get('/events/:id', async (req, res) => {
   const eventRepo = new EventRepository();
+  const attemptRepo = new DeliveryAttemptRepository();
+
   const event = await eventRepo.findById(req.params.id);
 
   if (!event) {
@@ -123,7 +126,67 @@ router.get('/events/:id', async (req, res) => {
     return;
   }
 
-  res.json(event);
+  const attempts = await attemptRepo.findByEventId(event.id);
+
+  res.json({ event, attempts });
+});
+
+router.get('/events', async (req, res) => {
+  const eventRepo = new EventRepository();
+  const page = Math.max(1, req.query.page ? parseInt(req.query.page, 10) : 1);
+  const limit = Math.min(100, Math.max(1, req.query.limit ? parseInt(req.query.limit, 10) : 50));
+
+  const result = await eventRepo.listWithAttemptCounts({
+    destination_id: req.query.destination_id || undefined,
+    status: req.query.status || undefined,
+    page,
+    limit,
+  });
+
+  res.json({
+    events: result.rows,
+    total: result.total,
+    page,
+    limit,
+    total_pages: Math.ceil(result.total / limit) || 1,
+  });
+});
+
+router.get('/destinations', async (req, res) => {
+  const destRepo = new DestinationRepository();
+  const destinations = await destRepo.findAll();
+
+  const sanitised = destinations.map(({ secret: _, ...rest }) => rest);
+
+  const redis = getRedis();
+  try {
+    const pipeline = redis.pipeline();
+    sanitised.forEach((d) => pipeline.hgetall(`cb:${d.id}`));
+    const results = await pipeline.exec();
+
+    const healthMap = {};
+    if (results) {
+      results.forEach(([err, hash], i) => {
+        if (err || !hash || Object.keys(hash).length === 0) {
+          healthMap[sanitised[i].id] = 'healthy';
+          return;
+        }
+        const state = hash.state;
+        if (state === 'OPEN') healthMap[sanitised[i].id] = 'unhealthy';
+        else if (state === 'HALF_OPEN') healthMap[sanitised[i].id] = 'degraded';
+        else healthMap[sanitised[i].id] = 'healthy';
+      });
+    }
+
+    sanitised.forEach((d) => {
+      d.health = healthMap[d.id] || 'healthy';
+    });
+  } catch (err) {
+    log.warn({ err }, 'failed to fetch CB state from Redis, reporting unknown');
+    sanitised.forEach((d) => { d.health = 'unknown'; });
+  }
+
+  res.json({ destinations: sanitised });
 });
 
 router.post('/events/:id/replay', async (req, res) => {

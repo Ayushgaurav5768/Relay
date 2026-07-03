@@ -7,6 +7,7 @@ const mockChannel = {
   consume: vi.fn(),
   cancel: vi.fn(),
   ack: vi.fn(),
+  nack: vi.fn(),
 };
 
 const mockDestRepo = {
@@ -22,11 +23,26 @@ const mockEventRepo = {
   updateStatus: vi.fn(),
 };
 
+const mockCircuitBreakerInstance = {
+  isProbeAllowed: vi.fn(),
+  onSuccess: vi.fn(),
+  onFailure: vi.fn(),
+  reset: vi.fn(),
+};
+
 const mockDeliver = vi.fn();
 
 vi.mock('@relay/lib/rabbitmq.js', () => ({
   connectRabbitMQ: vi.fn(() => mockChannel),
   EXCHANGE_NAME: 'relay.events',
+}));
+
+vi.mock('@relay/lib/redis.js', () => ({
+  getRedis: vi.fn(() => ({})),
+}));
+
+vi.mock('@relay/lib/circuitBreaker.js', () => ({
+  CircuitBreaker: vi.fn().mockImplementation(() => mockCircuitBreakerInstance),
 }));
 
 vi.mock('@relay/lib/repositories/DestinationRepository.js', () => ({
@@ -132,6 +148,9 @@ describe('handleMessage (via consume callback)', () => {
     mockDestRepo.findEnabled.mockResolvedValue([dest]);
     mockChannel.consume.mockImplementation(captureHandler);
     mockAttemptRepo.findLatestByEventId.mockResolvedValue(null);
+    mockCircuitBreakerInstance.isProbeAllowed.mockResolvedValue({ allowed: true, state: 'CLOSED', retry_after: -1 });
+    mockCircuitBreakerInstance.onSuccess.mockResolvedValue({ state: 'CLOSED', failure_count: 0 });
+    mockCircuitBreakerInstance.onFailure.mockResolvedValue({ state: 'CLOSED', failure_count: 1, cooldown_until: -1, open_count: 0 });
     await startConsumers();
   });
 
@@ -264,6 +283,86 @@ describe('handleMessage (via consume callback)', () => {
 
     await vi.waitFor(() => {
       expect(mockChannel.ack).toHaveBeenCalledWith(msg);
+    });
+  });
+
+  describe('circuit breaker integration', () => {
+    beforeEach(() => {
+      mockCircuitBreakerInstance.isProbeAllowed.mockResolvedValue({ allowed: true, state: 'CLOSED', retry_after: -1 });
+      mockCircuitBreakerInstance.onSuccess.mockResolvedValue({ state: 'CLOSED', failure_count: 0 });
+      mockCircuitBreakerInstance.onFailure.mockResolvedValue({ state: 'CLOSED', failure_count: 1, cooldown_until: -1, open_count: 0 });
+    });
+
+    it('calls onSuccess after successful delivery when cb is CLOSED', async () => {
+      mockDeliver.mockResolvedValue({ statusCode: 200, responseBodySnippet: 'ok' });
+      mockCircuitBreakerInstance.isProbeAllowed.mockResolvedValue({ allowed: true, state: 'CLOSED', retry_after: -1 });
+
+      triggerConsume(message);
+
+      await vi.waitFor(() => {
+        expect(mockCircuitBreakerInstance.onSuccess).toHaveBeenCalled();
+      });
+      expect(mockCircuitBreakerInstance.onFailure).not.toHaveBeenCalled();
+    });
+
+    it('calls onFailure after failed delivery when cb is CLOSED', async () => {
+      mockDeliver.mockResolvedValue({ statusCode: 500, responseBodySnippet: 'err' });
+      mockCircuitBreakerInstance.isProbeAllowed.mockResolvedValue({ allowed: true, state: 'CLOSED', retry_after: -1 });
+
+      triggerConsume(message);
+
+      await vi.waitFor(() => {
+        expect(mockCircuitBreakerInstance.onFailure).toHaveBeenCalled();
+      });
+      expect(mockCircuitBreakerInstance.onSuccess).not.toHaveBeenCalled();
+    });
+
+    it('nacks the message when cb is OPEN and probe is not allowed', async () => {
+      mockCircuitBreakerInstance.isProbeAllowed.mockResolvedValue({ allowed: false, state: 'OPEN', retry_after: 15000 });
+
+      const msg = triggerConsume(message);
+
+      await vi.waitFor(() => {
+        expect(mockChannel.nack).toHaveBeenCalledWith(msg, false, true);
+      });
+      expect(mockDeliver).not.toHaveBeenCalled();
+      expect(mockAttemptRepo.insert).not.toHaveBeenCalled();
+    });
+
+    it('proceeds with delivery when cb is HALF_OPEN (probe allowed)', async () => {
+      mockDeliver.mockResolvedValue({ statusCode: 200, responseBodySnippet: 'ok' });
+      mockCircuitBreakerInstance.isProbeAllowed.mockResolvedValue({ allowed: true, state: 'HALF_OPEN', retry_after: -1 });
+
+      triggerConsume(message);
+
+      await vi.waitFor(() => {
+        expect(mockDeliver).toHaveBeenCalled();
+      });
+      expect(mockCircuitBreakerInstance.onSuccess).toHaveBeenCalled();
+    });
+
+    it('does not block delivery when cb throws (fail-open)', async () => {
+      mockDeliver.mockResolvedValue({ statusCode: 200, responseBodySnippet: 'ok' });
+      mockCircuitBreakerInstance.isProbeAllowed.mockRejectedValue(new Error('redis down'));
+
+      triggerConsume(message);
+
+      await vi.waitFor(() => {
+        expect(mockDeliver).toHaveBeenCalled();
+      });
+      expect(mockChannel.ack).toHaveBeenCalled();
+    });
+
+    it('does not block ack when cb.onSuccess throws', async () => {
+      mockDeliver.mockResolvedValue({ statusCode: 200, responseBodySnippet: 'ok' });
+      mockCircuitBreakerInstance.isProbeAllowed.mockResolvedValue({ allowed: true, state: 'CLOSED', retry_after: -1 });
+      mockCircuitBreakerInstance.onSuccess.mockRejectedValue(new Error('redis error'));
+
+      const msg = triggerConsume(message);
+
+      await vi.waitFor(() => {
+        expect(mockChannel.ack).toHaveBeenCalledWith(msg);
+      });
     });
   });
 });
