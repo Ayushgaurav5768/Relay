@@ -6,6 +6,10 @@ on:
   push:
     branches: [main]
 
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAMESPACE: ghcr.io/ayushgaurav5768/relay
+
 jobs:
   lint:
     name: Lint
@@ -83,3 +87,30 @@ jobs:
       - name: Tear down
         if: always()
         run: docker compose down -v
+
+  push-images:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [lint, unit-tests, integration]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [ingest, delivery-worker, dashboard-api]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push ${{ matrix.service }}
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: services/${{ matrix.service }}/Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAMESPACE }}/${{ matrix.service }}:${{ github.sha }}
+            ${{ env.IMAGE_NAMESPACE }}/${{ matrix.service }}:latest
