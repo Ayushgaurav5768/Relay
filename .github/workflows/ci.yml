@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+      - run: npm ci
+      - name: ESLint (fail on warnings)
+        run: npm run lint -- --max-warnings 0
+
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+      - run: npm ci
+      - name: @relay/lib tests
+        run: npx vitest run
+        working-directory: packages/lib
+      - name: @relay/ingest tests
+        run: npx vitest run
+        working-directory: services/ingest
+      - name: @relay/delivery-worker tests
+        run: npx vitest run
+        working-directory: services/delivery-worker
+
+  integration:
+    name: Integration Gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build & start services
+        run: docker compose up -d --wait --build postgres redis rabbitmq ingest delivery-worker flaky-server
+
+      - name: Wait for all services to be ready
+        run: |
+          timeout 90 bash -c '
+            echo "Waiting for ingest..."
+            until curl -sf http://localhost:3001/health > /dev/null 2>&1; do sleep 2; done
+            echo "Ingest ready"
+            echo "Waiting for delivery-worker..."
+            until curl -sf http://localhost:3002/health > /dev/null 2>&1; do sleep 2; done
+            echo "Delivery-worker ready"
+            echo "Waiting for flaky-server..."
+            until curl -sf http://localhost:9099/health > /dev/null 2>&1; do sleep 2; done
+            echo "Flaky-server ready"
+            echo "All services ready"
+          '
+
+      - name: Seed destinations
+        run: docker compose run --rm --no-deps ingest node load-tests/seed-load-test.js
+
+      - name: Run reduced load test
+        run: |
+          docker run --rm -i \
+            --network "container:$(docker compose ps -q ingest)" \
+            -e INGEST_URL=http://localhost:3001 \
+            grafana/k6:latest run - < load-tests/load-test-ci.js
+
+      - name: Wait for delivery pipeline to settle
+        run: sleep 15
+
+      - name: Run post-load verification
+        run: docker compose run --rm --no-deps delivery-worker node load-tests/verifyLoadTest.js
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v
