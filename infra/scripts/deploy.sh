@@ -88,6 +88,7 @@ fi
 # ── 4. Database migrations ─────────────────────────────────────────────────
 echo "Running database migrations..."
 docker compose -f "$COMPOSE_FILE" run --rm \
+  -w /app \
   -e PGPASSWORD="$PGPASSWORD" \
   ingest node scripts/migrate.js
 
