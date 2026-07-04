@@ -14,6 +14,8 @@ RUN npm install --no-audit --no-fund
 # Copy source code
 COPY packages/lib/src/ packages/lib/src/
 COPY services/ingest/src/ services/ingest/src/
+COPY scripts/ scripts/
+COPY db/ db/
 
 EXPOSE 3001
 
