@@ -102,7 +102,6 @@ relay/
 ├── docker-compose.yml        # Full local dev stack
 ├── .env.example              # All environment variables documented
 ├── eslint.config.js          # ESLint flat config
-└── CONTEXT.md                # Full context for LLM-assisted development
 ```
 
 ## Quick Start
